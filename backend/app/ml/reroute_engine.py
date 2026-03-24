@@ -4,9 +4,7 @@ Monitors active routes and triggers re-routing when delay thresholds are exceede
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -101,7 +99,7 @@ class DynamicRerouteEngine:
 
         traffic_multiplier = 1 + event.severity * 0.8  # up to 80% slowdown
 
-        solution = solve_vrp_ortools(
+        solution = await solve_vrp_ortools(
             locations=remaining_stops,
             vehicles=[VehicleConfig(id=vehicle_id, capacity_kg=9999, start_location=remaining_stops[0])],
             max_solve_seconds=10,

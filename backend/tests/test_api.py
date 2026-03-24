@@ -55,7 +55,7 @@ async def test_vrp_solver():
     ]
     vehicle = VehicleConfig(id="v1", capacity_kg=300, start_location=depot)
 
-    solution = solve_vrp_ortools([depot] + stops, [vehicle], max_solve_seconds=5)
+    solution = await solve_vrp_ortools([depot] + stops, [vehicle], max_solve_seconds=5)
     assert solution.total_distance_km > 0
     assert len(solution.routes) >= 1
 

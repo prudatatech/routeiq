@@ -102,9 +102,9 @@ async def optimize_routes(
     ]
 
     # -----------------------------
-    # Run VRP solver
+    # Run VRP solver (Now async)
     # -----------------------------
-    solution = solve_vrp_ortools(
+    solution = await solve_vrp_ortools(
         locations=locations,
         vehicles=vehicle_configs,
         max_solve_seconds=payload.max_solve_time_seconds,

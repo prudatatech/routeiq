@@ -65,6 +65,15 @@ app.mount("/metrics", metrics_app)
 app.include_router(api_router, prefix="/api/v1")
 
 
+@app.get("/")
+async def root():
+    return {
+        "message": "RouteIQ API is running",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {

@@ -1,7 +1,7 @@
 """Telemetry endpoints — live GPS & vehicle data ingestion."""
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db

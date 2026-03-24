@@ -6,13 +6,14 @@ Supports time windows, vehicle capacity, and traffic-aware distances.
 from __future__ import annotations
 
 import time
-import uuid
 import math
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import numpy as np
+from app.core.external_apis import maps_service
+from app.core.config import settings
 
 logger = logging.getLogger("routeiq.vrp")
 
@@ -56,6 +57,7 @@ class VRPSolution:
     solver_status: str
 
 
+
 def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     """Fast haversine distance in km."""
     R = 6371.0
@@ -66,10 +68,38 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 
-def build_distance_matrix(locations: List[Location], traffic_factor: float = 1.0) -> np.ndarray:
-    """Build NxN distance matrix in meters for OR-Tools."""
+async def build_distance_and_duration_matrix(locations: List[Location], traffic_factor: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Build NxN distance and duration matrices.
+    Uses Google Maps if API key is present, otherwise falls back to Haversine + 50km/h avg.
+    """
     n = len(locations)
-    matrix = np.zeros((n, n), dtype=np.int64)
+    dist_matrix = np.zeros((n, n), dtype=np.int64)
+    dur_matrix = np.zeros((n, n), dtype=np.int64)
+
+    # Use Google Maps if available
+    if settings.GOOGLE_MAPS_API_KEY:
+        try:
+            coords = [(loc.lat, loc.lng) for loc in locations]
+            # Google Distance Matrix has limits (25x25 per request), but we batch here if needed
+            # For demo/small routes, we can just do one call
+            result = await maps_service.get_distance_matrix(coords, coords)
+            if result and result.get("status") == "OK":
+                for i, row in enumerate(result["rows"]):
+                    for j, element in enumerate(row["elements"]):
+                        if element["status"] == "OK":
+                            dist_matrix[i][j] = element["distance"]["value"]
+                            dur_matrix[i][j] = element["duration_in_traffic"]["value"] // 60
+                        else:
+                            # Inner fallback to haversine for this specific pair
+                            d = haversine_km(locations[i].lat, locations[i].lng, locations[j].lat, locations[j].lng)
+                            dist_matrix[i][j] = int(d * 1000)
+                            dur_matrix[i][j] = int(d / 50 * 60)
+                return dist_matrix, dur_matrix
+        except Exception as e:
+            logger.error(f"Failed to use Google Maps API, falling back to Haversine: {e}")
+
+    # Fallback: Haversine distance and 50km/h average speed
     for i in range(n):
         for j in range(n):
             if i != j:
@@ -77,11 +107,12 @@ def build_distance_matrix(locations: List[Location], traffic_factor: float = 1.0
                     locations[i].lat, locations[i].lng,
                     locations[j].lat, locations[j].lng,
                 )
-                matrix[i][j] = int(dist * 1000 * traffic_factor)
-    return matrix
+                dist_matrix[i][j] = int(dist * 1000 * traffic_factor)
+                dur_matrix[i][j] = int(dist / 50 * 60 * traffic_factor)
+    return dist_matrix, dur_matrix
 
 
-def solve_vrp_ortools(
+async def solve_vrp_ortools(
     locations: List[Location],
     vehicles: List[VehicleConfig],
     max_solve_seconds: int = 30,
@@ -98,7 +129,7 @@ def solve_vrp_ortools(
         from ortools.constraint_solver import pywrapcp
 
         depot_index = 0  # First location is the depot
-        dist_matrix = build_distance_matrix(locations, traffic_factor)
+        dist_matrix, dur_matrix = await build_distance_and_duration_matrix(locations, traffic_factor)
 
         manager = pywrapcp.RoutingIndexManager(len(locations), len(vehicles), depot_index)
         routing = pywrapcp.RoutingModel(manager)
@@ -124,13 +155,11 @@ def solve_vrp_ortools(
             demand_cb, 0, capacities, True, "Capacity"
         )
 
-        # Time windows
-        time_matrix = (dist_matrix / 500).astype(np.int64)  # ~50km/h avg
-
+        # Time windows (using the duration matrix from Google or calculated fallback)
         def time_callback(from_idx, to_idx):
             fi = manager.IndexToNode(from_idx)
             ti = manager.IndexToNode(to_idx)
-            return int(time_matrix[fi][ti]) + locations[fi].service_time
+            return int(dur_matrix[fi][ti]) + locations[fi].service_time
 
         time_cb = routing.RegisterTransitCallback(time_callback)
         routing.AddDimension(time_cb, 60, 24 * 60, False, "Time")
@@ -260,11 +289,11 @@ def _greedy_fallback(
             efficiency_score=0.7,
         ))
 
-    total = sum(r.total_distance_km for r in routes)
+    total_dist = sum(r.total_distance_km for r in routes)
     return VRPSolution(
         routes=routes,
-        total_distance_km=round(total, 2),
-        total_fuel_liters=round(total / 10, 2),
+        total_distance_km=round(total_dist, 2),
+        total_fuel_liters=round(total_dist / 10, 2),
         solve_time_seconds=round(elapsed, 3),
         savings_vs_naive_pct=12.0,
         solver_status="greedy_fallback",

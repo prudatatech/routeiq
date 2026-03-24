@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.core.security import get_current_user, require_role
+from app.core.security import get_current_user
 from app.models.models import Route
 from app.schemas.schemas import RouteResponse, TokenData
 
@@ -42,7 +42,6 @@ async def get_route(
     db: AsyncSession = Depends(get_db),
     token: TokenData = Depends(get_current_user),
 ):
-    from app.models.models import Vehicle
     result = await db.execute(
         select(Route).options(joinedload(Route.vehicle)).where(Route.id == route_id)
     )
