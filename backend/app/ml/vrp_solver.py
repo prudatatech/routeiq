@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-import numpy as np
+# from __future__ import annotations (already at top)
 from app.core.external_apis import maps_service
 from app.core.config import settings
 
@@ -68,11 +68,11 @@ def haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 
-async def build_distance_and_duration_matrix(locations: List[Location], traffic_factor: float = 1.0) -> Tuple[np.ndarray, np.ndarray]:
+async def build_distance_and_duration_matrix(locations: List[Location], traffic_factor: float = 1.0) -> Tuple:
     """
     Build NxN distance and duration matrices.
-    Uses Google Maps if API key is present, otherwise falls back to Haversine + 50km/h avg.
     """
+    import numpy as np
     n = len(locations)
     dist_matrix = np.zeros((n, n), dtype=np.int64)
     dur_matrix = np.zeros((n, n), dtype=np.int64)
