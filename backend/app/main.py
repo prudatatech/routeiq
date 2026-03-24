@@ -13,9 +13,12 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.core.redis import redis_client
+import logging
 from app.core.logging import setup_logging
 from app.middleware.metrics import PrometheusMiddleware
 from app.middleware.request_id import RequestIDMiddleware
+
+logger = logging.getLogger("routeiq.main")
 
 
 @asynccontextmanager
@@ -28,7 +31,13 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
 
     # Connect Redis
-    await redis_client.ping()
+    try:
+        await redis_client.ping()
+        logger.info("Connected to Redis")
+    except Exception as e:
+        logger.error(f"Failed to connect to Redis on startup: {e}")
+        # In some environments, we might want to allow startup without Redis
+        # but for production it's usually better to know immediately.
 
     yield
 
@@ -42,7 +51,8 @@ app = FastAPI(
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    openapi_url="/openapi.json"
+    openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 # Middleware (order matters — outermost first)

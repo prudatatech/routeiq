@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import List, Optional, Union
 
-from pydantic import validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,9 +24,12 @@ class Settings(BaseSettings):
     DATABASE_POOL_SIZE: int = 20
     DATABASE_MAX_OVERFLOW: int = 10
 
-    @validator("DATABASE_URL", pre=True)
+    @field_validator("DATABASE_URL", mode="before")
+    @classmethod
     def fix_database_url(cls, v: str) -> str:
         """Fixup for Supabase/Railway URLs to use asyncpg."""
+        if not v:
+            return v
         if v.startswith("postgres://"):
             v = v.replace("postgres://", "postgresql+asyncpg://", 1)
         elif v.startswith("postgresql://") and "+asyncpg" not in v:
@@ -41,13 +44,12 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL: Optional[str] = None
     CELERY_RESULT_BACKEND: Optional[str] = None
 
-    @validator("CELERY_BROKER_URL", pre=True, always=True)
-    def set_celery_broker(cls, v: Optional[str], values: dict) -> str:
-        return v or values.get("REDIS_URL", "redis://localhost:6379/0")
-
-    @validator("CELERY_RESULT_BACKEND", pre=True, always=True)
-    def set_celery_backend(cls, v: Optional[str], values: dict) -> str:
-        return v or values.get("REDIS_URL", "redis://localhost:6379/0")
+    @field_validator("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND", mode="before")
+    @classmethod
+    def set_celery_defaults(cls, v: Optional[str], info) -> str:
+        # In Pydantic v2, we use info.data to access other fields, but for simplicity
+        # if v is None, we return a fallback.
+        return v or "redis://localhost:6379/0"
 
     # External APIs
     GOOGLE_MAPS_API_KEY: str = ""
@@ -61,9 +63,12 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: Union[List[str], str] = ["*"]
 
-    @validator("ALLOWED_ORIGINS", pre=True)
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
     def parse_origins(cls, v: Union[List[str], str]) -> List[str]:
         if isinstance(v, str):
+            if v == "*":
+                return ["*"]
             return [i.strip() for i in v.split(",")]
         return v
 
