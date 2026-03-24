@@ -1,7 +1,9 @@
 """
 RouteIQ - Fleet Intelligence Platform
-FastAPI Application Entry Point
 """
+import sys
+import logging
+print("PYTHON_STARTUP: Initializing RouteIQ Backend...")
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -25,24 +27,28 @@ logger = logging.getLogger("routeiq.main")
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     setup_logging()
+    logger.info("Lifespan starting: Resilient Mode active")
 
-    # Create DB tables in a try/except to avoid startup hang
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-        logger.info("Database tables verified")
-    except Exception as e:
-        logger.error(f"Database initialization failed or deferred: {e}")
+    import asyncio
 
-    # Connect Redis
-    try:
-        await redis_client.ping()
-        logger.info("Connected to Redis")
-    except Exception as e:
-        logger.error(f"Failed to connect to Redis on startup: {e}")
-        # In some environments, we might want to allow startup without Redis
-        # but for production it's usually better to know immediately.
+    # Background task for DB + Redis to avoid blocking the server boot
+    async def initial_setup():
+        # 1. Database
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database tables verified/created background")
+        except Exception as e:
+            logger.error(f"Background database init failed: {e}")
 
+        # 2. Redis
+        try:
+            await redis_client.ping()
+            logger.info("Redis connected background")
+        except Exception as e:
+            logger.error(f"Background Redis init failed: {e}")
+
+    asyncio.create_task(initial_setup())
     yield
 
     # Cleanup
