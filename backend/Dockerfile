@@ -21,7 +21,8 @@ USER appuser
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s \
-    CMD curl -f http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
+    CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Use shell form so $PORT is expanded at runtime
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
