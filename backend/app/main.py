@@ -26,9 +26,13 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     setup_logging()
 
-    # Create DB tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Create DB tables in a try/except to avoid startup hang
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables verified")
+    except Exception as e:
+        logger.error(f"Database initialization failed or deferred: {e}")
 
     # Connect Redis
     try:
