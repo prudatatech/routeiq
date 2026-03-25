@@ -152,6 +152,7 @@ class ETARequest(BaseModel):
 
 
 class ETAResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
     vehicle_id: uuid.UUID
     estimated_minutes: float
     confidence_interval_low: float

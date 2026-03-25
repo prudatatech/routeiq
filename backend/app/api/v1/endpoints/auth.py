@@ -92,17 +92,17 @@ async def sync_user(
 
     # 1. Lookup by supabase_id (The most robust way)
     res = db.table("users").select("*").eq("supabase_id", supa_id).maybe_single().execute()
-    if res.data:
+    if res and res.data:
         return res.data
 
     # 2. Lookup by email to bind existing account (transition from local to Supabase)
     if token_data.email:
         email_res = db.table("users").select("*").eq("email", token_data.email).maybe_single().execute()
-        if email_res.data:
+        if email_res and email_res.data:
             # Bind Supabase ID to existing local account
             u_id = email_res.data["id"]
             update_res = db.table("users").update({"supabase_id": supa_id}).eq("id", u_id).execute()
-            if update_res.data:
+            if update_res and update_res.data:
                 return update_res.data[0]
 
     # 3. Create new user — first user gets admin role
