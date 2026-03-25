@@ -82,49 +82,48 @@ async def sync_user(
     db: Client = Depends(get_db),
     token_data: TokenData = Depends(get_current_user),
 ):
-    """Sync Supabase User to local public.users table."""
+    """Sync Supabase User to local users table via supabase_id."""
     import uuid as uuid_lib
 
     try:
-        user_uuid = str(uuid_lib.UUID(token_data.user_id))
+        supa_id = str(uuid_lib.UUID(token_data.user_id))
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID format in token")
 
-    # 1. Lookup by Supabase UUID
-    result = db.table("users").select("*").eq("id", user_uuid).maybe_single().execute()
-    if result.data:
-        return result.data
+    # 1. Lookup by supabase_id (The most robust way)
+    res = db.table("users").select("*").eq("supabase_id", supa_id).maybe_single().execute()
+    if res.data:
+        return res.data
 
-    # 2. Lookup by email to bind existing account
+    # 2. Lookup by email to bind existing account (transition from local to Supabase)
     if token_data.email:
-        email_result = db.table("users").select("*").eq("email", token_data.email).maybe_single().execute()
-        if email_result.data:
-            # Update the existing user's ID to Supabase UUID
-            try:
-                update_result = db.table("users").update({"id": user_uuid}).eq("email", token_data.email).execute()
-                if update_result.data:
-                    return update_result.data[0]
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Identity binding failed: {str(e)}")
+        email_res = db.table("users").select("*").eq("email", token_data.email).maybe_single().execute()
+        if email_res.data:
+            # Bind Supabase ID to existing local account
+            u_id = email_res.data["id"]
+            update_res = db.table("users").update({"supabase_id": supa_id}).eq("id", u_id).execute()
+            if update_res.data:
+                return update_res.data[0]
 
     # 3. Create new user — first user gets admin role
-    count_result = db.table("users").select("id", count="exact").execute()
-    user_count = count_result.count or 0
+    count_res = db.table("users").select("id", count="exact").execute()
+    user_count = count_res.count or 0
     default_role = "admin" if user_count == 0 else "driver"
 
     new_user = {
-        "id": user_uuid,
-        "email": token_data.email or f"{user_uuid}@auth.supabase",
+        "supabase_id": supa_id,
+        "email": token_data.email or f"{supa_id}@auth.supabase",
         "full_name": token_data.full_name or "New User",
         "hashed_password": "SUPABASE_AUTH_EXTERNAL",
         "role": default_role,
         "is_active": True,
     }
+    
     try:
-        create_result = db.table("users").insert(new_user).execute()
-        if not create_result.data:
-            raise HTTPException(status_code=500, detail="Database sync failed")
-        return create_result.data[0]
+        create_res = db.table("users").insert(new_user).execute()
+        if create_res.data:
+            return create_res.data[0]
+        raise HTTPException(status_code=500, detail="Database sync failed")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database sync failed: {str(e)}")
 

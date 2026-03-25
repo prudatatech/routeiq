@@ -140,8 +140,12 @@ async def get_current_user(
     # Fetch the local role from our users table via Supabase client
     try:
         import uuid
-        user_uuid = str(uuid.UUID(token_data.user_id))
-        result = db.table("users").select("id,role,full_name,email").eq("id", user_uuid).maybe_single().execute()
+        u_id = str(uuid.UUID(token_data.user_id))
+        # Try lookup by either id or supabase_id
+        result = db.table("users").select("id,role,full_name,email") \
+                   .or_(f"id.eq.{u_id},supabase_id.eq.{u_id}") \
+                   .maybe_single().execute()
+        
         if result.data:
             token_data.role = result.data.get("role", token_data.role)
             token_data.full_name = result.data.get("full_name", token_data.full_name)
