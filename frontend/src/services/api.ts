@@ -3,7 +3,7 @@ import { useAuthStore } from '@/store/authStore'
 import toast from 'react-hot-toast'
 
 export const api = axios.create({
-  baseURL: '/api/v1',
+  baseURL: import.meta.env.VITE_API_URL || '/api/v1',
   timeout: 30_000,
   headers: { 'Content-Type': 'application/json' },
 })
@@ -47,6 +47,8 @@ export const authAPI = {
     api.post('/auth/login', { email, password }).then(r => r.data),
   register: (data: object) =>
     api.post('/auth/register', data).then(r => r.data),
+  sync: () => 
+    api.post('/auth/sync').then(r => r.data),
   logout: () => api.post('/auth/logout'),
 }
 

@@ -9,8 +9,10 @@ from app.core.database import get_db
 from app.core.security import (
     create_access_token, create_refresh_token,
     decode_token, hash_password, verify_password,
+    get_current_user
 )
 from app.models.models import User
+from app.schemas.auth import TokenData
 from app.schemas.schemas import LoginRequest, TokenResponse, UserCreate, UserResponse
 
 router = APIRouter()
@@ -74,6 +76,43 @@ async def refresh(body: dict, db: AsyncSession = Depends(get_db)):
         refresh_token=create_refresh_token(td),
         role=str(user.role),
     )
+
+
+@router.post("/sync", response_model=UserResponse)
+async def sync_user(
+    db: AsyncSession = Depends(get_db),
+    token_data: TokenData = Depends(get_current_user)
+):
+    """Sync Supabase User to local public.users table."""
+    import uuid
+    try:
+        user_uuid = uuid.UUID(token_data.user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID format in token")
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        # Create user if doesn't exist (e.g. first login via Supabase)
+        # Use info from token metadata extracted in decode_token
+        user = User(
+            id=user_uuid,
+            email=token_data.email or f"{user_uuid}@auth.supabase",
+            full_name=token_data.full_name or "New User",
+            hashed_password="SUPABASE_AUTH_EXTERNAL",
+            role="driver", # Default role for new signups
+            is_active=True
+        )
+        db.add(user)
+        try:
+            await db.flush()
+            await db.refresh(user)
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=500, detail=f"Database sync failed: {str(e)}")
+    
+    return user
 
 
 @router.post("/logout")

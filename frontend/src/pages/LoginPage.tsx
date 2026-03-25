@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ShieldCheck, UserCog, User, Truck } from 'lucide-react'
 import { useAuthStore } from '@/store/authStore'
 import { authAPI } from '@/services/api'
+import { supabase } from '@/services/supabase'
 import { Card, Button, Spinner } from '@/components/ui'
 import toast from 'react-hot-toast'
 import clsx from 'clsx'
@@ -22,16 +23,34 @@ export default function LoginPage() {
     const targetPass = customPass || password
     
     try {
-      const data = await authAPI.login(targetEmail, targetPass)
-      setAuth(data.access_token, data.refresh_token, data.role)
-      toast.success(`Welcome back, ${data.role}!`)
-      if (data.role === 'superadmin') {
+      const { data: sbData, error: sbError } = await supabase.auth.signInWithPassword({
+        email: targetEmail,
+        password: targetPass
+      })
+
+      if (sbError) throw sbError
+      if (!sbData.session) throw new Error('No session returned')
+
+      const { access_token, refresh_token } = sbData.session
+      
+      // 1. Temporary auth to allow sync call (role is irrelevant here)
+      setAuth(access_token, refresh_token, 'authenticated')
+
+      // 2. Sync with backend to get real role and profile from public.users
+      const userData = await authAPI.sync()
+      
+      // 3. Final auth state with real role
+      setAuth(access_token, refresh_token, userData.role)
+      
+      toast.success(`Access Granted: ${userData.role}`)
+      
+      if (userData.role === 'superadmin') {
         navigate('/superadmin')
       } else {
         navigate('/dashboard')
       }
-    } catch {
-      // toast is already handled by axios interceptor or global handler
+    } catch (err: any) {
+      toast.error(err.message || 'Authentication failed')
     } finally {
       setLoading(false)
     }

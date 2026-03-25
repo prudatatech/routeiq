@@ -53,6 +53,8 @@ class Settings(BaseSettings):
 
     # External APIs
     GOOGLE_MAPS_API_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""
     OPENWEATHER_API_KEY: str = ""
     TOMTOM_API_KEY: str = ""
 

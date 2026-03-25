@@ -50,15 +50,45 @@ def create_refresh_token(data: dict) -> str:
 
 
 def decode_token(token: str) -> TokenData:
+    """Decode and verify JWT token from either local issuer or Supabase."""
+    
+    # 1. Try local verification first
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id: str = payload.get("sub")
         role: str = payload.get("role", "driver")
-        if user_id is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-        return TokenData(user_id=user_id, role=role)
+        if user_id:
+            return TokenData(user_id=user_id, role=role)
     except JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+        pass
+
+    # 2. Try Supabase verification if secret is provided
+    if settings.SUPABASE_JWT_SECRET:
+        try:
+            # Supabase tokens typically use HS256
+            payload = jwt.decode(token, settings.SUPABASE_JWT_SECRET, algorithms=["HS256"], options={"verify_aud": False})
+            user_id: str = payload.get("sub")
+            sb_role = payload.get("role", "authenticated")
+            
+            # Extract email and name from user_metadata (Supabase standard)
+            metadata = payload.get("user_metadata", {})
+            email = payload.get("email") or metadata.get("email")
+            full_name = metadata.get("full_name") or metadata.get("name")
+            
+            if user_id:
+                return TokenData(
+                    user_id=user_id, 
+                    role=sb_role, 
+                    email=email, 
+                    full_name=full_name
+                )
+        except JWTError:
+            pass
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, 
+        detail="Invalid or expired authentication credentials"
+    )
 
 
 async def get_current_user(
