@@ -1,15 +1,11 @@
 """Vehicle management endpoints."""
 import uuid
 from typing import List, Optional
-
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from supabase import Client
 from app.core.database import get_db
-from app.core.redis import cache_get, cache_set
 from app.core.security import get_current_user, require_role
-from app.models.models import Vehicle
+from app.core.redis import cache_get, cache_set
 from app.schemas.schemas import TokenData, VehicleCreate, VehicleResponse, VehicleUpdate, FleetSummary
 
 router = APIRouter()
@@ -20,26 +16,23 @@ async def list_vehicles(
     status: Optional[str] = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     token: TokenData = Depends(get_current_user),
 ):
-    cache_key = f"vehicles:list:{status}:{skip}:{limit}"
+    cache_key = f"vehicles:list:{token.user_id}:{status}:{skip}:{limit}"
     cached = await cache_get(cache_key)
     if cached:
         return cached
 
-    q = select(Vehicle)
-    if token.role == "driver":
-        q = q.where(Vehicle.driver_id == uuid.UUID(token.user_id))
-    elif status:
-        q = q.where(Vehicle.status == status)
-        
-    q = q.offset(skip).limit(limit)
+    query = db.table("vehicles").select("*")
 
-    result = await db.execute(q)
-    vehicles = result.scalars().all()
-    
-    data = [VehicleResponse.model_validate(v).model_dump(mode="json") for v in vehicles]
+    if token.role == "driver":
+        query = query.eq("driver_id", token.user_id)
+    elif status:
+        query = query.eq("status", status)
+
+    result = query.range(skip, skip + limit - 1).execute()
+    data = result.data or []
     await cache_set(cache_key, data, ttl=30)
     return data
 
@@ -47,25 +40,28 @@ async def list_vehicles(
 @router.post("/", response_model=VehicleResponse, status_code=201)
 async def create_vehicle(
     payload: VehicleCreate,
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     _: TokenData = Depends(require_role("admin", "manager")),
 ):
-    vehicle = Vehicle(**payload.model_dump())
-    db.add(vehicle)
-    await db.flush()
-    await db.refresh(vehicle)
-    return vehicle
+    result = db.table("vehicles").insert(payload.model_dump()).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create vehicle")
+    return result.data[0]
 
 
 @router.get("/summary", response_model=FleetSummary)
 async def fleet_summary(
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     _: TokenData = Depends(get_current_user),
 ):
-    result = await db.execute(
-        select(Vehicle.status, func.count()).group_by(Vehicle.status)
-    )
-    counts = dict(result.all())
+    result = db.table("vehicles").select("status").execute()
+    vehicles = result.data or []
+
+    counts: dict = {}
+    for v in vehicles:
+        s = v.get("status", "unknown")
+        counts[s] = counts.get(s, 0) + 1
+
     total = sum(counts.values())
     return FleetSummary(
         total=total,
@@ -79,17 +75,17 @@ async def fleet_summary(
 @router.get("/{vehicle_id}", response_model=VehicleResponse)
 async def get_vehicle(
     vehicle_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     token: TokenData = Depends(get_current_user),
 ):
-    result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
-    vehicle = result.scalar_one_or_none()
-    if not vehicle:
+    result = db.table("vehicles").select("*").eq("id", str(vehicle_id)).maybe_single().execute()
+    if not result.data:
         raise HTTPException(status_code=404, detail="Vehicle not found")
-        
-    if token.role == "driver" and vehicle.driver_id != uuid.UUID(token.user_id):
+
+    vehicle = result.data
+    if token.role == "driver" and vehicle.get("driver_id") != token.user_id:
         raise HTTPException(status_code=403, detail="Not authorized to view this vehicle")
-        
+
     return vehicle
 
 
@@ -97,30 +93,27 @@ async def get_vehicle(
 async def update_vehicle(
     vehicle_id: uuid.UUID,
     payload: VehicleUpdate,
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     _: TokenData = Depends(require_role("admin", "manager")),
 ):
-    result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
-    vehicle = result.scalar_one_or_none()
-    if not vehicle:
+    existing = db.table("vehicles").select("id").eq("id", str(vehicle_id)).maybe_single().execute()
+    if not existing.data:
         raise HTTPException(status_code=404, detail="Vehicle not found")
 
-    for field, value in payload.model_dump(exclude_none=True).items():
-        setattr(vehicle, field, value)
-
-    await db.flush()
-    await db.refresh(vehicle)
-    return vehicle
+    update_data = {k: v for k, v in payload.model_dump().items() if v is not None}
+    result = db.table("vehicles").update(update_data).eq("id", str(vehicle_id)).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Update failed")
+    return result.data[0]
 
 
 @router.delete("/{vehicle_id}", status_code=204)
 async def delete_vehicle(
     vehicle_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     _: TokenData = Depends(require_role("admin")),
 ):
-    result = await db.execute(select(Vehicle).where(Vehicle.id == vehicle_id))
-    vehicle = result.scalar_one_or_none()
-    if not vehicle:
+    existing = db.table("vehicles").select("id").eq("id", str(vehicle_id)).maybe_single().execute()
+    if not existing.data:
         raise HTTPException(status_code=404, detail="Vehicle not found")
-    await db.delete(vehicle)
+    db.table("vehicles").delete().eq("id", str(vehicle_id)).execute()

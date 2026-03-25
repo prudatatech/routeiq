@@ -1,9 +1,7 @@
 """
 RouteIQ - Fleet Intelligence Platform
 """
-import sys
 import logging
-print("PYTHON_STARTUP: Initializing RouteIQ Backend...")
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -13,9 +11,7 @@ from prometheus_client import make_asgi_app
 
 from app.api.v1.router import api_router
 from app.core.config import settings
-from app.core.database import engine, Base
 from app.core.redis import redis_client
-import logging
 from app.core.logging import setup_logging
 from app.middleware.metrics import PrometheusMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -27,21 +23,13 @@ logger = logging.getLogger("routeiq.main")
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     setup_logging()
-    logger.info("Lifespan starting: Resilient Mode active")
+    logger.info("Lifespan starting: Supabase Client Mode active")
 
     import asyncio
 
-    # Background task for DB + Redis to avoid blocking the server boot
+    # Background task for Redis validation
     async def initial_setup():
-        # 1. Database
-        try:
-            async with engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database tables verified/created background")
-        except Exception as e:
-            logger.error(f"Background database init failed: {e}")
-
-        # 2. Redis
+        # Redis
         try:
             await redis_client.ping()
             logger.info("Redis connected background")
@@ -53,7 +41,6 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     await redis_client.close()
-    await engine.dispose()
 
 
 app = FastAPI(
@@ -65,7 +52,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Middleware (order matters — outermost first)
+# Middleware
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(PrometheusMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
@@ -77,7 +64,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount Prometheus metrics endpoint
+# Mount Prometheus metrics
 metrics_app = make_asgi_app()
 app.mount("/metrics", metrics_app)
 
@@ -107,6 +94,6 @@ async def health_check():
 async def readiness_check():
     try:
         await redis_client.ping()
-        return {"status": "ready", "redis": "ok", "database": "ok"}
+        return {"status": "ready", "redis": "ok", "database": "supabase_api"}
     except Exception as e:
         return {"status": "not_ready", "error": str(e)}

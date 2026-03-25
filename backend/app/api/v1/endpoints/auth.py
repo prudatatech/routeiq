@@ -2,16 +2,14 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
+from supabase import Client
 
 from app.core.database import get_db
 from app.core.security import (
     create_access_token, create_refresh_token,
     decode_token, hash_password, verify_password,
-    get_current_user
+    get_current_user,
 )
-from app.models.models import User
 from app.schemas.auth import TokenData
 from app.schemas.schemas import LoginRequest, TokenResponse, UserCreate, UserResponse
 
@@ -19,143 +17,118 @@ router = APIRouter()
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)
-async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == payload.email))
-    if result.scalar_one_or_none():
+async def register(payload: UserCreate, db: Client = Depends(get_db)):
+    existing = db.table("users").select("id").eq("email", payload.email).execute()
+    if existing.data:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    user = User(
-        email=payload.email,
-        full_name=payload.full_name,
-        hashed_password=hash_password(payload.password),
-        role=payload.role,
-    )
-    db.add(user)
-    await db.flush()
-    await db.refresh(user)
-    return user
+    user_data = {
+        "email": payload.email,
+        "full_name": payload.full_name,
+        "hashed_password": hash_password(payload.password),
+        "role": payload.role,
+        "is_active": True,
+    }
+    result = db.table("users").insert(user_data).execute()
+    if not result.data:
+        raise HTTPException(status_code=500, detail="Failed to create user")
+    return result.data[0]
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.email == payload.email))
-    user = result.scalar_one_or_none()
-    
-    if not user or not verify_password(payload.password, user.hashed_password):
+async def login(payload: LoginRequest, db: Client = Depends(get_db)):
+    result = db.table("users").select("*").eq("email", payload.email).maybe_single().execute()
+    user = result.data
+
+    if not user or not verify_password(payload.password, user["hashed_password"]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-    if not user.is_active:
+    if not user.get("is_active", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
 
-    user.last_login = datetime.now(timezone.utc)
+    db.table("users").update({"last_login": datetime.now(timezone.utc).isoformat()}).eq("id", user["id"]).execute()
 
-    token_data = {"sub": str(user.id), "role": str(user.role)}
+    token_data = {"sub": str(user["id"]), "role": user["role"]}
     return TokenResponse(
         access_token=create_access_token(token_data),
         refresh_token=create_refresh_token(token_data),
-        role=str(user.role),
+        role=user["role"],
     )
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(body: dict, db: AsyncSession = Depends(get_db)):
+async def refresh(body: dict, db: Client = Depends(get_db)):
     token = body.get("refresh_token")
     if not token:
         raise HTTPException(status_code=400, detail="refresh_token required")
 
     token_data = await decode_token(token)
-    result = await db.execute(select(User).where(User.id == token_data.user_id))
-    user = result.scalar_one_or_none()
+    result = db.table("users").select("*").eq("id", token_data.user_id).maybe_single().execute()
+    user = result.data
 
-    if not user or not user.is_active:
+    if not user or not user.get("is_active", True):
         raise HTTPException(status_code=401, detail="User not found or inactive")
 
-    td = {"sub": str(user.id), "role": str(user.role)}
+    td = {"sub": str(user["id"]), "role": user["role"]}
     return TokenResponse(
         access_token=create_access_token(td),
         refresh_token=create_refresh_token(td),
-        role=str(user.role),
+        role=user["role"],
     )
 
 
 @router.post("/sync", response_model=UserResponse)
 async def sync_user(
-    db: AsyncSession = Depends(get_db),
-    token_data: TokenData = Depends(get_current_user)
+    db: Client = Depends(get_db),
+    token_data: TokenData = Depends(get_current_user),
 ):
-    """Sync Supabase User to local public.users table.
-    
-    Handles both brand new users and linking existing users (by email) to 
-    their new Supabase identities (by UUID).
-    """
-    import uuid
-    from sqlalchemy import update
-    
+    """Sync Supabase User to local public.users table."""
+    import uuid as uuid_lib
+
     try:
-        user_uuid = uuid.UUID(token_data.user_id)
+        user_uuid = str(uuid_lib.UUID(token_data.user_id))
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID format in token")
 
-    # 1. Attempt lookup by Supabase UUID
-    result = await db.execute(select(User).where(User.id == user_uuid))
-    user = result.scalar_one_or_none()
-    
-    if user:
-        return user
+    # 1. Lookup by Supabase UUID
+    result = db.table("users").select("*").eq("id", user_uuid).maybe_single().execute()
+    if result.data:
+        return result.data
 
-    # 2. If not found by ID, attempt lookup by Email to 'bind' existing account
+    # 2. Lookup by email to bind existing account
     if token_data.email:
-        result = await db.execute(select(User).where(User.email == token_data.email))
-        existing_user = result.scalar_one_or_none()
-        
-        if existing_user:
-            # We found a user with this email but a different ID.
-            # We'll update their ID to the Supabase UUID to bind the identities.
-            # Note: This is safe as long as we handle FKs or have no active sessions for old ID.
-            old_id = existing_user.id
+        email_result = db.table("users").select("*").eq("email", token_data.email).maybe_single().execute()
+        if email_result.data:
+            # Update the existing user's ID to Supabase UUID
             try:
-                # We use a direct update to change the PK
-                await db.execute(
-                    update(User)
-                    .where(User.id == old_id)
-                    .values(id=user_uuid)
-                )
-                await db.flush()
-                # Re-fetch to return the updated object
-                result = await db.execute(select(User).where(User.id == user_uuid))
-                return result.scalar_one()
+                update_result = db.table("users").update({"id": user_uuid}).eq("email", token_data.email).execute()
+                if update_result.data:
+                    return update_result.data[0]
             except Exception as e:
-                await db.rollback()
-                # If PK update fails (e.g. FK constraints), we fall back to creating a new user or erroring
-                # For safety, we'll error out here to avoid split identities
                 raise HTTPException(status_code=500, detail=f"Identity binding failed: {str(e)}")
 
-    # 3. Create brand new user if none of the above found
+    # 3. Create new user — first user gets admin role
+    count_result = db.table("users").select("id", count="exact").execute()
+    user_count = count_result.count or 0
+    default_role = "admin" if user_count == 0 else "driver"
+
+    new_user = {
+        "id": user_uuid,
+        "email": token_data.email or f"{user_uuid}@auth.supabase",
+        "full_name": token_data.full_name or "New User",
+        "hashed_password": "SUPABASE_AUTH_EXTERNAL",
+        "role": default_role,
+        "is_active": True,
+    }
     try:
-        # Check if this is the first user in the system
-        result = await db.execute(select(func.count()).select_from(User))
-        user_count = result.scalar() or 0
-        default_role = "admin" if user_count == 0 else "driver"
-        
-        user = User(
-            id=user_uuid,
-            email=token_data.email or f"{user_uuid}@auth.supabase",
-            full_name=token_data.full_name or "New User",
-            hashed_password="SUPABASE_AUTH_EXTERNAL",
-            role=default_role,
-            is_active=True
-        )
-        db.add(user)
-        await db.flush()
-        await db.refresh(user)
-        return user
+        create_result = db.table("users").insert(new_user).execute()
+        if not create_result.data:
+            raise HTTPException(status_code=500, detail="Database sync failed")
+        return create_result.data[0]
     except Exception as e:
-        await db.rollback()
         raise HTTPException(status_code=500, detail=f"Database sync failed: {str(e)}")
 
 
 @router.post("/logout")
 async def logout():
-    # With JWT, logout is handled client-side (discard tokens)
-    # For full revocation: add token to Redis blocklist
     return {"message": "Logged out successfully"}

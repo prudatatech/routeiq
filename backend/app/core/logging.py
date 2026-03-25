@@ -15,7 +15,6 @@ def setup_logging() -> None:
     )
 
     # Silence noisy libs
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 

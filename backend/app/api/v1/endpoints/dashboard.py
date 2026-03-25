@@ -2,11 +2,9 @@
 import uuid
 from datetime import datetime, timezone, date
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from supabase import Client
 from app.core.database import get_db
 from app.core.security import get_current_user
-from app.models.models import Route, Vehicle
 from app.schemas.schemas import KPIResponse, TokenData
 
 router = APIRouter()
@@ -14,44 +12,47 @@ router = APIRouter()
 
 @router.get("/kpis", response_model=KPIResponse)
 async def get_kpis(
-    db: AsyncSession = Depends(get_db),
+    db: Client = Depends(get_db),
     token: TokenData = Depends(get_current_user),
 ):
-    """Aggregate KPIs for admin/manager dashboard."""
-    today = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc)
+    """Aggregate KPIs for admin/manager dashboard using Supabase client."""
+    today = datetime.combine(date.today(), datetime.min.time()).replace(tzinfo=timezone.utc).isoformat()
     
-    # Filter by Driver if applicable
+    # 1. Active Vehicles Count
+    v_query = db.table("vehicles").select("id", count="exact").eq("status", "on_route")
     if token.role == "driver":
-        driver_uuid = uuid.UUID(token.user_id)
-        # For routes, we need to join with Vehicle
-        routes_q = select(Route).join(Vehicle).where(Vehicle.driver_id == driver_uuid).where(Route.created_at >= today)
-        v_count_q = select(func.count()).where(Vehicle.driver_id == driver_uuid).where(Vehicle.status == "on_route")
+        v_query = v_query.eq("driver_id", token.user_id)
+    
+    v_result = v_query.execute()
+    active_vehicles = v_result.count or 0
+
+    # 2. Routes Today
+    r_query = db.table("routes").select("*").gte("created_at", today)
+    if token.role == "driver":
+        # Get vehicle IDs for driver
+        v_ids_result = db.table("vehicles").select("id").eq("driver_id", token.user_id).execute()
+        v_ids = [v["id"] for v in (v_ids_result.data or [])]
+        if not v_ids:
+            routes_today = []
+        else:
+            r_query = r_query.in_("vehicle_id", v_ids)
+            r_result = r_query.execute()
+            routes_today = r_result.data or []
     else:
-        routes_q = select(Route).where(Route.created_at >= today)
-        v_count_q = select(func.count()).where(Vehicle.status == "on_route")
-
-    # Active vehicles
-    v_result = await db.execute(v_count_q)
-    active_vehicles = v_result.scalar() or 0
-
-    # Routes today
-    routes_result = await db.execute(routes_q)
-    routes_today = routes_result.scalars().all()
+        r_result = r_query.execute()
+        routes_today = r_result.data or []
 
     total_deliveries = len(routes_today)
-    completed = sum(1 for r in routes_today if r.status == "completed")
+    completed = sum(1 for r in routes_today if r.get("status") == "completed")
     on_time_rate = (completed / total_deliveries * 100) if total_deliveries > 0 else 0.0
     
-    # Use 0.0 as fallback for null estimated_fuel_liters
-    fuel_today = sum((r.estimated_fuel_liters or 0.0) for r in routes_today) * 95  # ₹95/L
+    fuel_today = sum((r.get("estimated_fuel_liters") or 0.0) for r in routes_today) * 95  # ₹95/L
     
-    # Safe average calculation
-    avg_score = sum((r.optimization_score or 0.8) for r in routes_today) / max(1, len(routes_today))
+    avg_score = sum((r.get("optimization_score") or 0.8) for r in routes_today) / max(1, len(routes_today))
     fuel_saved_pct = avg_score * 20  # up to 20% based on optimization score
     
-    # Fallback for empty data
     if total_deliveries == 0:
-        on_time_rate = 100.0  # Default to 100% if no deliveries yet
+        on_time_rate = 100.0
         avg_score = 1.0
 
     return KPIResponse(
