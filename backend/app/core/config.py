@@ -51,10 +51,7 @@ class Settings(BaseSettings):
             if f"postgres.{project_id}" not in v:
                 v = v.replace("postgres:", f"postgres.{project_id}:", 1)
                 
-            # Force sslmode=require for the pooler if not specified
-            if "sslmode=" not in v:
-                separator = "&" if "?" in v else "?"
-                v += f"{separator}sslmode=require"
+            # Note: Do not add sslmode=require here as asyncpg doesn't support it as a kwarg
                 
         return v
 
