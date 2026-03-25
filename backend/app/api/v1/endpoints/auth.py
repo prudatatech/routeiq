@@ -63,7 +63,7 @@ async def refresh(body: dict, db: AsyncSession = Depends(get_db)):
     if not token:
         raise HTTPException(status_code=400, detail="refresh_token required")
 
-    token_data = decode_token(token)
+    token_data = await decode_token(token)
     result = await db.execute(select(User).where(User.id == token_data.user_id))
     user = result.scalar_one_or_none()
 

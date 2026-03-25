@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     GOOGLE_MAPS_API_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""
+    SUPABASE_JWKS_URL: str = "https://xgihvwtiaqkpusrdvclk.supabase.co/auth/v1/.well-known/jwks.json"
     OPENWEATHER_API_KEY: str = ""
     TOMTOM_API_KEY: str = ""
 
