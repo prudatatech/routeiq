@@ -83,36 +83,70 @@ async def sync_user(
     db: AsyncSession = Depends(get_db),
     token_data: TokenData = Depends(get_current_user)
 ):
-    """Sync Supabase User to local public.users table."""
+    """Sync Supabase User to local public.users table.
+    
+    Handles both brand new users and linking existing users (by email) to 
+    their new Supabase identities (by UUID).
+    """
     import uuid
+    from sqlalchemy import update
+    
     try:
         user_uuid = uuid.UUID(token_data.user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID format in token")
 
+    # 1. Attempt lookup by Supabase UUID
     result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
     
-    if not user:
-        # Create user if doesn't exist (e.g. first login via Supabase)
-        # Use info from token metadata extracted in decode_token
+    if user:
+        return user
+
+    # 2. If not found by ID, attempt lookup by Email to 'bind' existing account
+    if token_data.email:
+        result = await db.execute(select(User).where(User.email == token_data.email))
+        existing_user = result.scalar_one_or_none()
+        
+        if existing_user:
+            # We found a user with this email but a different ID.
+            # We'll update their ID to the Supabase UUID to bind the identities.
+            # Note: This is safe as long as we handle FKs or have no active sessions for old ID.
+            old_id = existing_user.id
+            try:
+                # We use a direct update to change the PK
+                await db.execute(
+                    update(User)
+                    .where(User.id == old_id)
+                    .values(id=user_uuid)
+                )
+                await db.flush()
+                # Re-fetch to return the updated object
+                result = await db.execute(select(User).where(User.id == user_uuid))
+                return result.scalar_one()
+            except Exception as e:
+                await db.rollback()
+                # If PK update fails (e.g. FK constraints), we fall back to creating a new user or erroring
+                # For safety, we'll error out here to avoid split identities
+                raise HTTPException(status_code=500, detail=f"Identity binding failed: {str(e)}")
+
+    # 3. Create brand new user if none of the above found
+    try:
         user = User(
             id=user_uuid,
             email=token_data.email or f"{user_uuid}@auth.supabase",
             full_name=token_data.full_name or "New User",
             hashed_password="SUPABASE_AUTH_EXTERNAL",
-            role="driver", # Default role for new signups
+            role="driver", # Default role
             is_active=True
         )
         db.add(user)
-        try:
-            await db.flush()
-            await db.refresh(user)
-        except Exception as e:
-            await db.rollback()
-            raise HTTPException(status_code=500, detail=f"Database sync failed: {str(e)}")
-    
-    return user
+        await db.flush()
+        await db.refresh(user)
+        return user
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database sync failed: {str(e)}")
 
 
 @router.post("/logout")

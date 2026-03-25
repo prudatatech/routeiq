@@ -40,10 +40,19 @@ async def get_kpis(
 
     total_deliveries = len(routes_today)
     completed = sum(1 for r in routes_today if r.status == "completed")
-    on_time_rate = (completed / total_deliveries * 100) if total_deliveries > 0 else 95.0
-    fuel_today = sum(r.estimated_fuel_liters for r in routes_today) * 95  # ₹95/L
-    avg_score = sum(r.optimization_score or 0.8 for r in routes_today) / max(1, len(routes_today))
+    on_time_rate = (completed / total_deliveries * 100) if total_deliveries > 0 else 0.0
+    
+    # Use 0.0 as fallback for null estimated_fuel_liters
+    fuel_today = sum((r.estimated_fuel_liters or 0.0) for r in routes_today) * 95  # ₹95/L
+    
+    # Safe average calculation
+    avg_score = sum((r.optimization_score or 0.8) for r in routes_today) / max(1, len(routes_today))
     fuel_saved_pct = avg_score * 20  # up to 20% based on optimization score
+    
+    # Fallback for empty data
+    if total_deliveries == 0:
+        on_time_rate = 100.0  # Default to 100% if no deliveries yet
+        avg_score = 1.0
 
     return KPIResponse(
         active_vehicles=active_vehicles,

@@ -4,10 +4,14 @@ from typing import Optional, Union
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 import bcrypt
 import httpx
 from jose import JWTError, jwt
 from app.core.config import settings
+from app.core.database import get_db
+from app.models.models import User
 from app.schemas.auth import TokenData
 
 # Global JWKS cache
@@ -129,8 +133,28 @@ async def decode_token(token: str) -> TokenData:
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db)
 ) -> TokenData:
-    return await decode_token(credentials.credentials)
+    token_data = await decode_token(credentials.credentials)
+    
+    # Supabase roles in tokens are generic ('authenticated').
+    # We must fetch the local role from our 'users' table.
+    import uuid
+    try:
+        user_uuid = uuid.UUID(token_data.user_id)
+    except ValueError:
+        return token_data # Fallback if not a UUID
+        
+    result = await db.execute(select(User).where(User.id == user_uuid))
+    user = result.scalar_one_or_none()
+    
+    if user:
+        # Override token info with DB info
+        token_data.role = str(user.role)
+        token_data.full_name = user.full_name
+        token_data.email = user.email
+    
+    return token_data
 
 
 def require_role(*roles: str):
