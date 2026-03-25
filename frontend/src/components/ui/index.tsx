@@ -133,10 +133,10 @@ export function KPICard({ label, value, delta, deltaUp, icon, color, progress }:
 }
 
 // ---------- Loading Spinner ----------
-export function Spinner({ size = 24 }: { size?: number }) {
+export function Spinner({ size = 24, className }: { size?: number; className?: string }) {
   return (
     <div 
-      className="border-2 border-slate-800 border-t-yellow-400 rounded-full animate-spin"
+      className={clsx("border-2 border-slate-800 border-t-yellow-400 rounded-full animate-spin", className)}
       style={{ width: size, height: size }} 
     />
   )

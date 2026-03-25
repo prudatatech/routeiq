@@ -9,6 +9,9 @@ import AnalyticsPage from '@/pages/AnalyticsPage'
 import OptimizePage from '@/pages/OptimizePage'
 import SuperadminPage from '@/pages/SuperadminPage'
 import AIHubPage from '@/pages/AIHubPage'
+import { useState, useEffect } from 'react'
+import { authAPI } from '@/services/api'
+import { Spinner } from '@/components/ui'
 
 function PrivateRoute({ children, allowedRoles }: { children: React.ReactNode, allowedRoles?: string[] }) {
   const token = useAuthStore(s => s.token)
@@ -23,46 +26,80 @@ function PrivateRoute({ children, allowedRoles }: { children: React.ReactNode, a
   return <>{children}</>
 }
 
+function SyncWrapper({ children }: { children: React.ReactNode }) {
+  const { token, setAuth, refreshToken } = useAuthStore()
+  const [isSyncing, setIsSyncing] = useState(!!token)
+
+  useEffect(() => {
+    async function sync() {
+      if (token) {
+        try {
+          const userData = await authAPI.sync()
+          setAuth(token, refreshToken || '', userData.role)
+        } catch (err) {
+          console.error('Sync failed:', err)
+          // If sync fails with 401, clear auth
+        }
+      }
+      setIsSyncing(false)
+    }
+    sync()
+  }, []) // Run once on mount
+
+  if (isSyncing) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center gap-4">
+        <Spinner size={40} className="text-yellow-500" />
+        <p className="text-[10px] font-black uppercase text-slate-400 tracking-[0.3em]">Synching Intelligence...</p>
+      </div>
+    )
+  }
+
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={
-          <PrivateRoute>
-            <AppLayout />
-          </PrivateRoute>
-        }>
-          <Route index element={<Navigate to="/dashboard" replace />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="fleet" element={
-            <PrivateRoute allowedRoles={['superadmin', 'admin', 'manager']}>
-              <FleetPage />
+      <SyncWrapper>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/" element={
+            <PrivateRoute>
+              <AppLayout />
             </PrivateRoute>
-          } />
-          <Route path="routes" element={<RoutesPage />} />
-          <Route path="optimize" element={
-            <PrivateRoute allowedRoles={['superadmin', 'admin', 'manager']}>
-              <OptimizePage />
-            </PrivateRoute>
-          } />
-          <Route path="analytics" element={
-            <PrivateRoute allowedRoles={['superadmin', 'admin', 'manager']}>
-              <AnalyticsPage />
-            </PrivateRoute>
-          } />
-          <Route path="superadmin" element={
-            <PrivateRoute allowedRoles={['superadmin']}>
-              <SuperadminPage />
-            </PrivateRoute>
-          } />
-          <Route path="ai-hub" element={
-            <PrivateRoute allowedRoles={['superadmin', 'admin']}>
-              <AIHubPage />
-            </PrivateRoute>
-          } />
-        </Route>
-      </Routes>
+          }>
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="fleet" element={
+              <PrivateRoute allowedRoles={['superadmin', 'admin', 'manager']}>
+                <FleetPage />
+              </PrivateRoute>
+            } />
+            <Route path="routes" element={<RoutesPage />} />
+            <Route path="optimize" element={
+              <PrivateRoute allowedRoles={['superadmin', 'admin', 'manager']}>
+                <OptimizePage />
+              </PrivateRoute>
+            } />
+            <Route path="analytics" element={
+              <PrivateRoute allowedRoles={['superadmin', 'admin', 'manager']}>
+                <AnalyticsPage />
+              </PrivateRoute>
+            } />
+            <Route path="superadmin" element={
+              <PrivateRoute allowedRoles={['superadmin']}>
+                <SuperadminPage />
+              </PrivateRoute>
+            } />
+            <Route path="ai-hub" element={
+              <PrivateRoute allowedRoles={['superadmin', 'admin']}>
+                <AIHubPage />
+              </PrivateRoute>
+            } />
+          </Route>
+        </Routes>
+      </SyncWrapper>
     </BrowserRouter>
   )
 }
