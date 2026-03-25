@@ -1,64 +1,53 @@
 import asyncio
 import uuid
 import bcrypt
-from datetime import datetime, timezone
-from sqlalchemy import text, select
-from app.core.database import AsyncSessionLocal, engine
-from app.models.models import User
+from app.core.database import get_db
+
+def hash_password(password: str) -> str:
+    pw_bytes = password.encode("utf-8")
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pw_bytes, salt).decode("utf-8")
 
 async def seed_users():
-    print("--- SEEDING USERS ---")
-    async with AsyncSessionLocal() as session:
-        users_to_seed = [
-            {
-                "email": "superadmin@routeiq.io",
-                "full_name": "Platform Superadmin",
-                "password": "SuperAdmin1234!",
-                "role": "superadmin"
-            },
-            {
-                "email": "admin@routeiq.io",
-                "full_name": "Fleet Admin",
-                "password": "Admin1234!",
-                "role": "admin"
-            },
-            {
-                "email": "manager@routeiq.io",
-                "full_name": "Fleet Manager",
-                "password": "Manager1234!",
-                "role": "manager"
-            },
-            {
-                "email": "driver@routeiq.io",
-                "full_name": "John Driver",
-                "password": "Driver1234!",
-                "role": "driver"
+    print("--- SEEDING USERS VIA SUPABASE CLIENT ---")
+    db = get_db()
+    
+    users_to_seed = [
+        {
+            "id": str(uuid.uuid4()),
+            "email": "admin@routeiq.io",
+            "full_name": "Fleet Admin",
+            "password": "Admin1234!",
+            "role": "admin"
+        },
+        {
+            "id": str(uuid.uuid4()),
+            "email": "driver@routeiq.io",
+            "full_name": "John Driver",
+            "password": "Driver1234!",
+            "role": "driver"
+        }
+    ]
+    
+    for u_data in users_to_seed:
+        # Check if exists
+        res = db.table("users").select("id").eq("email", u_data["email"]).execute()
+        if not res.data:
+            print(f"Creating user: {u_data['email']}")
+            hashed = hash_password(u_data["password"])
+            new_user = {
+                "id": u_data["id"],
+                "email": u_data["email"],
+                "full_name": u_data["full_name"],
+                "hashed_password": hashed,
+                "role": u_data["role"],
+                "is_active": True
             }
-        ]
-        
-        for u_data in users_to_seed:
-            result = await session.execute(select(User).where(User.email == u_data["email"]))
-            user = result.scalar_one_or_none()
-            if not user:
-                print(f"Creating user: {u_data['email']} ({u_data['role']})")
-                hashed = bcrypt.hashpw(u_data["password"].encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-                user = User(
-                    email=u_data["email"],
-                    full_name=u_data["full_name"],
-                    hashed_password=hashed,
-                    role=u_data["role"],
-                    is_active=True
-                )
-                session.add(user)
-            else:
-                print(f"User already exists: {u_data['email']}")
-        
-        await session.commit()
-    print("--- USER SEED COMPLETE ---")
-
-async def main():
-    await seed_users()
-    await engine.dispose()
+            db.table("users").insert(new_user).execute()
+        else:
+            print(f"User already exists: {u_data['email']}")
+            
+    print("--- SEED COMPLETE ---")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(seed_users())
