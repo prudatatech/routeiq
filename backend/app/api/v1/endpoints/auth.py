@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -132,12 +132,17 @@ async def sync_user(
 
     # 3. Create brand new user if none of the above found
     try:
+        # Check if this is the first user in the system
+        result = await db.execute(select(func.count()).select_from(User))
+        user_count = result.scalar() or 0
+        default_role = "admin" if user_count == 0 else "driver"
+        
         user = User(
             id=user_uuid,
             email=token_data.email or f"{user_uuid}@auth.supabase",
             full_name=token_data.full_name or "New User",
             hashed_password="SUPABASE_AUTH_EXTERNAL",
-            role="driver", # Default role
+            role=default_role,
             is_active=True
         )
         db.add(user)
