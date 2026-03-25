@@ -27,13 +27,35 @@ class Settings(BaseSettings):
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def fix_database_url(cls, v: str) -> str:
-        """Fixup for Supabase/Railway URLs to use asyncpg."""
+        """Fixup for Supabase/Railway URLs to use asyncpg and IPv4."""
         if not v:
             return v
+            
+        # 1. Standardize protocol for asyncpg
         if v.startswith("postgres://"):
             v = v.replace("postgres://", "postgresql+asyncpg://", 1)
         elif v.startswith("postgresql://") and "+asyncpg" not in v:
             v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+        # 2. Fix IPv6 'Network is unreachable' on Railway by using IPv4 Pooler
+        # If it's a standard Supabase hostname like db.xxx.supabase.co
+        import re
+        match = re.search(r"db\.([a-z0-9]+)\.supabase\.co", v)
+        if match:
+            project_id = match.group(1)
+            # Replace hostname with IPv4 pooler host (defaulting to us-east-1)
+            # and update username to 'postgres.[project_id]' as required by the pooler
+            v = v.replace(f"db.{project_id}.supabase.co", "aws-0-us-east-1.pooler.supabase.com")
+            
+            # Ensure the username matches the pooler requirement
+            if f"postgres.{project_id}" not in v:
+                v = v.replace("postgres:", f"postgres.{project_id}:", 1)
+                
+            # Force sslmode=require for the pooler if not specified
+            if "sslmode=" not in v:
+                separator = "&" if "?" in v else "?"
+                v += f"{separator}sslmode=require"
+                
         return v
 
     # Redis
