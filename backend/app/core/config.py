@@ -40,18 +40,25 @@ class Settings(BaseSettings):
         # 2. Fix IPv6 'Network is unreachable' on Railway by using IPv4 Pooler
         # If it's a standard Supabase hostname like db.xxx.supabase.co
         import re
-        match = re.search(r"db\.([a-z0-9]+)\.supabase\.co", v)
-        if match:
-            project_id = match.group(1)
-            # Replace hostname with IPv4 pooler host (defaulting to us-east-1)
-            # and update username to 'postgres.[project_id]' as required by the pooler
+        project_id = "xgihvwtiaqkpusrdvclk" # Default for this project
+        
+        # Try to extract project_id from URL if present
+        host_match = re.search(r"@db\.([a-z0-9]+)\.supabase\.co", v)
+        if host_match:
+            project_id = host_match.group(1)
+            # Switch to IPv4 Pooler host to avoid Railway IPv6 issues
             v = v.replace(f"db.{project_id}.supabase.co", "aws-0-us-east-1.pooler.supabase.com")
-            
-            # Ensure the username matches the pooler requirement
+            # Ensure port is set to pooler port if we switched hostname
+            if ":5432" in v:
+                v = v.replace(":5432", ":6543")
+
+        # 3. Apply Multi-Tenancy Username Format (postgres.[project_id])
+        # This is REQUIRED by Supabase pooler (port 6543)
+        if "pooler.supabase.com" in v or ":6543" in v:
             if f"postgres.{project_id}" not in v:
-                v = v.replace("postgres:", f"postgres.{project_id}:", 1)
-                
-            # Note: Do not add sslmode=require here as asyncpg doesn't support it as a kwarg
+                # Replace 'postgres' with 'postgres.[project_id]'
+                # We specifically look for '://postgres:' to avoid replacing other parts
+                v = v.replace("://postgres:", f"://postgres.{project_id}:", 1)
                 
         return v
 
