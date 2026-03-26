@@ -5,7 +5,7 @@ python-multipart==0.0.9
 
 # Supabase (REPLACES SQLAlchemy/asyncpg)
 supabase==2.4.5
-postructlog>=24.1.0
+structlog>=24.1.0
 upstash-redis>=1.0.0
 gunicorn>=21.2.0
 
