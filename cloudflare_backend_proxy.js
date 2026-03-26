@@ -4,8 +4,8 @@ const BACKEND_URL = 'https://melodious-beauty-production-87b1.up.railway.app';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS, PATCH',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With, Accept',
-  'Access-Control-Expose-Headers': '*',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, apikey, x-supabase-api-version, x-supabase-auth, range, if-none-match',
+  'Access-Control-Expose-Headers': 'Content-Range, Content-Length, ETag, Location',
   'Access-Control-Max-Age': '86400',
 };
 

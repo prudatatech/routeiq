@@ -21,15 +21,19 @@ api.interceptors.response.use(
   async (error) => {
     const original = error.config
     if (error.response?.status === 401 && !original._retry) {
+      // Don't loop on sync/login calls
+      if (original.url?.includes('/auth/sync') || original.url?.includes('/auth/login')) {
+        return Promise.reject(error)
+      }
+      
       original._retry = true
       const refreshToken = useAuthStore.getState().refreshToken
       if (refreshToken) {
         try {
-          const { data } = await axios.post('/api/v1/auth/refresh', { refresh_token: refreshToken })
-          useAuthStore.getState().setAuth(data.access_token, data.refresh_token, data.role)
-          original.headers.Authorization = `Bearer ${data.access_token}`
+          // Token refresh logic (to be implemented on backend)
           return api(original)
-        } catch {
+        } catch (err) {
+          console.error('Session expired, logging out')
           useAuthStore.getState().clearAuth()
           window.location.href = '/login'
         }
