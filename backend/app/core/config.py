@@ -28,7 +28,9 @@ class Settings(BaseSettings):
 
     # Redis (optional — gracefully degraded if missing)
     REDIS_URL: str = "redis://localhost:6379/0"
-    REDIS_CACHE_TTL: int = 300
+    UPSTASH_REDIS_REST_URL: Optional[str] = None
+    UPSTASH_REDIS_REST_TOKEN: Optional[str] = None
+    REDIS_CACHE_TTL: int = 3600
 
     # Celery
     CELERY_BROKER_URL: Optional[str] = None

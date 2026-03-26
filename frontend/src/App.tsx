@@ -36,9 +36,13 @@ function SyncWrapper({ children }: { children: React.ReactNode }) {
         try {
           const userData = await authAPI.sync()
           setAuth(token, refreshToken || '', userData.role)
-        } catch (err) {
-          console.error('Sync failed:', err)
-          // If sync fails with 401, clear auth
+        } catch (err: any) {
+          console.error('CRITICAL: Sync failed with detail:', {
+            status: err.response?.status,
+            data: err.response?.data,
+            message: err.message
+          })
+          // If sync specifically fails with 401, we might be hitting a key issue
         }
       }
       setIsSyncing(false)

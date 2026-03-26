@@ -50,7 +50,9 @@ export default function LoginPage() {
         navigate('/dashboard')
       }
     } catch (err: any) {
-      toast.error(err.message || 'Authentication failed')
+      console.error('LOGIN_ERROR_DETAILED:', err)
+      const detail = err.response?.data?.detail || err.message || 'Authentication failed'
+      toast.error(`Login Sync Failed: ${detail}`)
     } finally {
       setLoading(false)
     }
